@@ -141,9 +141,9 @@ if st.button("开始计算", type="primary"):
 
                 # 左轴 B
                 color_b = '#1f77b4'  # 经典蓝
-                ax1.set_xlabel('磁场强度 H (A/m)', fontsize=12)
-                ax1.set_ylabel('磁感应强度 B (mT)', color=color_b, fontsize=12)
-                line1, = ax1.plot(x_smooth, y1_smooth, color=color_b, linewidth=2, label='B-H 曲线')
+                ax1.set_xlabel(' H (A/m)', fontsize=12)
+                ax1.set_ylabel(' B (mT)', color=color_b, fontsize=12)
+                line1, = ax1.plot(x_smooth, y1_smooth, color=color_b, linewidth=2, label='B-H ')
                 ax1.scatter(x, y1, color=color_b, marker='o', s=50, zorder=5)  # 原始点
                 ax1.tick_params(axis='y', labelcolor=color_b)
                 ax1.grid(True, linestyle='--', alpha=0.5)
@@ -151,9 +151,9 @@ if st.button("开始计算", type="primary"):
                 # 右轴 mu
                 ax2 = ax1.twinx()
                 color_mu = '#ff7f0e'  # 经典橙
-                ax2.set_ylabel(r'磁导率 $\mu$ ($10^{-3}$ H/m)', color=color_mu, fontsize=12)
+                ax2.set_ylabel(r' $\mu$ ($10^{-3}$ H/m)', color=color_mu, fontsize=12)
                 line2, = ax2.plot(x_smooth, y2_smooth, color=color_mu, linewidth=2, linestyle='--',
-                                  label='μ-H 曲线')
+                                  label='μ-H ')
                 ax2.scatter(x, y2, color=color_mu, marker='s', s=50, zorder=5)  # 原始点
                 ax2.tick_params(axis='y', labelcolor=color_mu)
 
@@ -162,7 +162,7 @@ if st.button("开始计算", type="primary"):
                 labels = [l.get_label() for l in lines]
                 ax1.legend(lines, labels, loc='upper left', shadow=True)
 
-                plt.title('磁滞回线综合特性曲线', fontsize=14, pad=15)
+               
                 plt.tight_layout()
 
                 # 显示图像
@@ -176,5 +176,6 @@ if st.button("开始计算", type="primary"):
         except Exception as e:
             st.error(f"❌ 绘图过程发生未知错误: {e}")
             import traceback
+
 
             st.text(traceback.format_exc())
