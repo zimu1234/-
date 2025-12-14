@@ -4,14 +4,6 @@ import io
 import sys
 import numpy as np
 import matplotlib.pyplot as plt
-hide_streamlit_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            header {visibility: hidden;}
-            </style>
-            """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 from contextlib import redirect_stdout
 
 # ==============================================================================
@@ -230,5 +222,6 @@ if st.button("开始计算", type="primary"):
             import traceback
 
             st.text(traceback.format_exc())
+
 
 
