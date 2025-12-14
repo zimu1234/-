@@ -1,6 +1,6 @@
 from framework import AbstractPhyExp, DependDecoratorPool
 import math
-
+import numpy as np
 # ==============================================================================
 # 实验 1: 单摆测重力加速度
 # ==============================================================================
@@ -139,83 +139,155 @@ class OhmExp(AbstractPhyExp):
 # ==============================================================================
 hysteresis_pool = DependDecoratorPool()
 
-
 class HysteresisExp(AbstractPhyExp):
     """
     磁滞回线实验类
-    逻辑：涉及大量仪器常数（匝数、长度、截面积等）和一组示波器读数(X, Y)。
-    需要将电学量(X, Y, U)转换为磁学量(H, B)。
+    逻辑依据：
+    1. 输入：示波器读取的 X格数 和 Y格数，以及实验装置参数。
+    2. 计算：利用安培环路定理和RC积分电路原理，将格数转换为 H(磁场强度) 和 B(磁感应强度)。
+    3. 输出：计算 Bm, Br, Hc 等关键指标，并生成绘图数据。
     """
 
-    # 定义所有固定的仪器参数
-    DATA_FLOAT = ["N1", "N2", "l", "S", "Sx", "Sy", "R1", "R2", "C_uf"]
-    # 定义变化的测量数据
-    DATA_LIST = ["X_list", "Y_list"]
+    # === 1. 定义界面参数 ===
+    # 这些变量名对应实验报告图片2顶部的"样品参数"和"装置参数"
+    DATA_FLOAT = [
+        # --- 样品参数 ---
+        "L_m",          # 平均磁路长度 L (单位: m)
+        "S_m2",         # 样品的截面积 S (单位: m^2)
+        "N1",           # 励磁线圈匝数 N1
+        "N2",           # 探测线圈匝数 N2
+        
+        # --- 装置参数 ---
+        "Sx_V_div",     # 示波器 X轴灵敏度 (单位: V/div)
+        "Sy_V_div",     # 示波器 Y轴灵敏度 (单位: V/div)
+        "R1_Ohm",       # 采样电阻 R1 (单位: Ω)
+        "R2_Ohm",       # 积分电阻 R2 (单位: Ω)
+        "C_uF",         # 积分电容 C (单位: μF)
+    ]
+    
+    # 定义列表数据：对应实验报告图片2表格中的 "X(格)" 和 "Y(格)"
+    DATA_LIST = ["X_div_list", "Y_div_list"]
 
+    # === 2. 初始化默认数据 ===
     def build_empty_data_json(self) -> None:
+        """
+        生成默认数据模板。
+        数据来源：完全复刻实验报告图片2中的手写记录表。
+        X轴逻辑：从 5.0 降到 -5.0，再升回 5.0，形成一个闭合回路。
+        """
+        # 构造闭合回路的 X 轴数据 (5.0 -> -5.0 -> 5.0)
+        x_down = [5.0, 4.0, 3.0, 2.0, 1.0, 0.0, -1.0, -2.0, -3.0, -4.0, -5.0]
+        x_up   = [-5.0, -4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+        # 拼接数组，去除重复的连接点，形成完整回线
+        x_full = x_down + x_up[1:] 
+        
+        # 构造 Y 轴数据 (对应图片表格中的 Y读数)
+        # y_down: 对应 X 从 5.0 到 -5.0 的过程
+        y_down = [2.60, 2.50, 2.41, 2.11, 1.90, 1.60, 1.20, 0.51, -0.98, -2.12, -2.60]
+        # y_up: 对应 X 从 -5.0 到 5.0 的过程
+        y_up   = [-2.60, -2.50, -2.40, -2.15, -1.85, -1.58, -1.00, 0.00, 1.30, 2.12, 2.60]
+        y_full = y_down + y_up[1:]
+
         template = {
-            "N1": 100, "N2": 300,  # 线圈匝数
-            "l": 0.084,  # 磁路平均长度 (m)
-            "S": 2.21e-4,  # 截面积 (m^2)
-            "Sx": 0.2, "Sy": 0.2,  # 示波器灵敏度
-            "R1": 1.9, "R2": 1.1e3,  # 电阻值
-            "C_uf": 2.0,  # 电容值 (微法)
-            "X_list": ["0.5", "1.0", "1.5", "2.0"],
-            "Y_list": ["0.8", "1.6", "2.4", "3.0"],
-            "INFO": "输入示波器读取的X和Y格数"
+            # --- 固定参数默认值 (源自报告图片顶端) ---
+            "L_m": 0.084,
+            "S_m2": 2.21e-4,
+            "N1": 100,
+            "N2": 300,
+            "Sx_V_div": 0.1,
+            "Sy_V_div": 0.1,
+            "R1_Ohm": 2.0,       # 采样电阻
+            "R2_Ohm": 1300.0,    # 积分电阻 (1.3k)
+            "C_uF": 2.5,         # 积分电容
+            
+            # --- 测量数据 (转换为字符串格式以适配前端输入框) ---
+            "X_div_list": [str(x) for x in x_full],
+            "Y_div_list": [str(y) for y in y_full],
+            
+            "INFO": "数据来源于天津大学物理实验报告照片"
         }
         self._write_json(template)
 
+    # === 3. 核心计算逻辑 ===
     @hysteresis_pool.depends()
     def calculate_BH(self):
-        # 1. 获取仪器常数
-        n1 = self.get_data_from_pool("N1")
-        n2 = self.get_data_from_pool("N2")
-        l = self.get_data_from_pool("l")
-        s = self.get_data_from_pool("S")
-        sx = self.get_data_from_pool("Sx")
-        sy = self.get_data_from_pool("Sy")
-        r1 = self.get_data_from_pool("R1")
-        r2 = self.get_data_from_pool("R2")
+        """
+        根据实验报告中的物理公式进行计算：
+        H = (N1 * Sx * X) / (L * R1)
+        B = (R2 * C * Sy * Y) / (N2 * S)
+        """
+        # 1. 读取参数
+        L = self.get_data_from_pool("L_m")
+        S = self.get_data_from_pool("S_m2")
+        N1 = self.get_data_from_pool("N1")
+        N2 = self.get_data_from_pool("N2")
+        Sx = self.get_data_from_pool("Sx_V_div")
+        Sy = self.get_data_from_pool("Sy_V_div")
+        R1 = self.get_data_from_pool("R1_Ohm")
+        R2 = self.get_data_from_pool("R2_Ohm")
+        C  = self.get_data_from_pool("C_uF") * 1e-6 # ⚠️ 重要：微法(uF) 转换为 法拉(F)
 
-        # 注意单位换算：微法 -> 法拉
-        c = self.get_data_from_pool("C_uf") * 1e-6
+        # 2. 读取测量列表并转换为 Numpy 数组以便向量化计算
+        x_raw = self.get_data_from_pool("X_div_list")
+        y_raw = self.get_data_from_pool("Y_div_list")
+        
+        if not x_raw or not y_raw: return
+        x = np.array(x_raw)
+        y = np.array(y_raw)
 
-        # 2. 获取测量列表
-        x_list = self.get_data_from_pool("X_list")
-        y_list = self.get_data_from_pool("Y_list")
+        # 3. 计算转换系数 (对应报告图片2中的公式推导)
+        # H 的系数: N1*Sx / (L*R1)
+        coeff_H = (N1 * Sx) / (L * R1)
+        
+        # B 的系数: R2*C*Sy / (N2*S)
+        coeff_B = (R2 * C * Sy) / (N2 * S)
 
-        if len(x_list) != len(y_list):
-            print("[错误] X和Y列表长度不一致")
-            return
+        # 4. 批量计算 H (A/m) 和 B (T)
+        H = x * coeff_H
+        B = y * coeff_B
 
-        print(f"{'No.':<4} | {'H (A/m)':<12} | {'B (T)':<12} | {'μ (H/m)':<12}")
+        # 5. 计算磁导率 mu = B / H
+        # 用于绘制 μ-H 曲线。注意处理分母为0的情况。
+        with np.errstate(divide='ignore', invalid='ignore'):
+            mu = np.abs(B) / np.abs(H)
+            mu[np.isinf(mu)] = 0 # 将无穷大置为0
+            mu = np.nan_to_num(mu)
+
+        # 6. 计算关键指标 (对应报告图片3底部的结果)
+        # Bm: 饱和磁感应强度 (最大值)
+        Bm = np.max(np.abs(B))
+        
+        # Br: 剩磁 (当 H=0 时的 B 值)
+        # 在数据中寻找 X 最接近 0 的点取平均
+        zero_x_indices = np.where(x == 0)[0]
+        if len(zero_x_indices) > 0:
+            Br = np.mean(np.abs(B[zero_x_indices]))
+        else:
+            Br = 0.0
+
+        # Hc: 矫顽力 (当 B=0 时的 H 值)
+        # 寻找 B 最接近 0 的位置对应的 H 值
+        min_b_idx = np.argmin(np.abs(B))
+        Hc = np.abs(H[min_b_idx]) 
+        
+        # 7. 打印计算过程表
+        print(f"{'X(格)':<6} | {'H(A/m)':<10} | {'Y(格)':<6} | {'B(mT)':<10}")
         print("-" * 50)
-
-        # 用于存储结果以便绘图
-        res_H, res_B, res_mu = [], [], []
-
-        for i, (x, y) in enumerate(zip(x_list, y_list)):
-            # 计算磁场强度 H = (N1 * I1) / l = (N1 * X * Sx / R1) / l
-            H = (n1 * x * sx) / (l * r1)
-
-            # 计算磁感应强度 B = (R2 * C * U2) / (N2 * S) = (R2 * C * Y * Sy) / (N2 * S)
-            B = (r2 * c * y * sy) / (n2 * s)
-
-            # 计算磁导率 mu = B / H
-            mu = B / H if H != 0 else 0
-
-            res_H.append(H)
-            res_B.append(B)
-            res_mu.append(mu)
-            print(f"{i + 1:<4} | {H:<12.4f} | {B:<12.6f} | {mu:<12.6e}")
-
-        # 将结果存入 data_pool，供 app.py 中的画图模块调用
-        self.data_pool["Results_H"] = res_H
-        self.data_pool["Results_B"] = res_B
-        self.data_pool["Results_mu"] = res_mu
+        for i in range(len(x)):
+            # B 显示为 mT (乘1000)
+            print(f"{x[i]:<6.1f} | {H[i]:<10.2f} | {y[i]:<6.2f} | {B[i]*1000:<10.2f}")
+            
         print("-" * 50)
-        print("计算完成，请查看下方图像。")
+        print(f"转换系数 coeff_H = {coeff_H:.4f}")
+        print(f"转换系数 coeff_B = {coeff_B:.6f}")
+        print(f"饱和磁感应强度 Bm ≈ {Bm*1000:.2f} mT")
+        print(f"剩磁 Br         ≈ {Br*1000:.2f} mT")
+        print(f"矫顽力 Hc       ≈ {Hc:.2f} A/m")
+
+        # 8. 存储结果至数据池 (供前端绘图使用)
+        self.data_pool["Results_H"] = H.tolist()
+        self.data_pool["Results_B"] = B.tolist()
+        self.data_pool["Results_mu"] = mu.tolist()
 
     def _write_json(self, data):
         import json
@@ -465,3 +537,4 @@ class InterferenceExp(AbstractPhyExp):
         import json
         with open(str(self.get_data_path()), 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
+
