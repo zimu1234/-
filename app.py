@@ -136,92 +136,87 @@ if st.button("开始计算", type="primary"):
     # 注意：绘图代码必须放在 try-except 块之外，确保计算成功后才执行
     TARGET_EXP_NAME = "磁滞回线 (H-B计算)"
 
+  
+
     if calc_success and choice == TARGET_EXP_NAME:
         st.markdown("---")
-        st.write("🔄 正在尝试绘图...")
+        st.write("🔄 正在生成分析图表...")
 
         try:
-            # 引入插值库用于绘制平滑曲线
             from scipy.interpolate import make_interp_spline
-
-            # 设置字体配置，防止中文乱码 (尝试多种常用中文字体)
+            
+            # 设置绘图字体 (优先使用 SimHei 显示中文，没有则回退到其他字体)
             plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial', 'sans-serif']
             plt.rcParams['axes.unicode_minus'] = False
 
-            # 从数据池获取计算结果
-            H_raw = exp.get_data_from_pool("Results_H", lambda: [])
-            B_raw = exp.get_data_from_pool("Results_B", lambda: [])
-            mu_raw = exp.get_data_from_pool("Results_mu", lambda: [])
+            # 获取计算结果
+            H = np.array(exp.get_data_from_pool("Results_H", lambda: []))
+            # 将 B 转换为 mT，将 mu 转换为 10^-3 单位，以匹配实验报告的坐标轴数值
+            B = np.array(exp.get_data_from_pool("Results_B", lambda: [])) * 1000 
+            mu = np.array(exp.get_data_from_pool("Results_mu", lambda: [])) * 1000 
 
-            data_count = len(H_raw)
-            st.write(f"📊 检测到数据点数量: {data_count}")
+            if len(H) > 3:
+                st.markdown("### 📊 实验结果可视化")
+                
+                # 创建 1 行 2 列的子图布局，figsize设置图片宽长比
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-            # 只有数据点足够多时才绘图
-            if data_count >= 3:
-                st.markdown("### 📊 实验图像 (双轴平滑曲线)")
-
-                # 1. 数据预处理：排序与单位转换
-                # 必须按 H 排序，否则插值曲线会混乱
-                combined_data = sorted(zip(H_raw, B_raw, mu_raw))
-                x = np.array([d[0] for d in combined_data])  # H (A/m)
-                y1 = np.array([d[1] * 1000 for d in combined_data])  # B (mT)
-                y2 = np.array([d[2] * 1000 for d in combined_data])  # mu (10^-3)
-
-                # 2. 平滑插值处理
-                try:
-                    # 创建更密集的 X 轴坐标点 (300个)
-                    x_smooth = np.linspace(x.min(), x.max(), 300)
-                    # 根据点数选择插值阶数 (点多用3阶，点少用2阶)
-                    k_value = 3 if data_count >= 4 else 2
-
-                    spl_y1 = make_interp_spline(x, y1, k=k_value)
-                    y1_smooth = spl_y1(x_smooth)
-
-                    spl_y2 = make_interp_spline(x, y2, k=k_value)
-                    y2_smooth = spl_y2(x_smooth)
-                except Exception as e:
-                    # 如果插值失败，降级为使用原始折线数据
-                    st.warning(f"平滑处理失败，降级为折线图: {e}")
-                    x_smooth, y1_smooth, y2_smooth = x, y1, y2
-
-                # 3. 绘制双 Y 轴图表
-                fig, ax1 = plt.subplots(figsize=(10, 6))
-
-                # --- 左轴 (B-H) ---
-                color_b = '#1f77b4'  # 蓝色
-                ax1.set_xlabel('磁场强度 H (A/m)', fontsize=12)
-                ax1.set_ylabel('磁感应强度 B (mT)', color=color_b, fontsize=12)
-                line1, = ax1.plot(x_smooth, y1_smooth, color=color_b, linewidth=2, label='B-H 曲线')
-                ax1.scatter(x, y1, color=color_b, marker='o', s=50, zorder=5)  # 原始数据点
-                ax1.tick_params(axis='y', labelcolor=color_b)
+                # === 图1: 磁滞回线 (B-H Loop) ===
+                # 复刻实验报告图片3的效果
+                ax1.set_title("磁滞回线 (B-H Loop)", fontsize=14)
+                ax1.set_xlabel("磁场强度 H (A/m)", fontsize=12)
+                ax1.set_ylabel("磁感应强度 B (mT)", fontsize=12)
+                
+                # 绘制闭合回路，zorder控制绘制层级
+                ax1.plot(H, B, 'o-', color='black', linewidth=1.5, label='Loop', zorder=2)
+                
+                # 绘制十字坐标轴辅助线
+                ax1.axhline(0, color='gray', linewidth=0.8, zorder=1) 
+                ax1.axvline(0, color='gray', linewidth=0.8, zorder=1)
                 ax1.grid(True, linestyle='--', alpha=0.5)
 
-                # --- 右轴 (mu-H) ---
-                ax2 = ax1.twinx()  # 共享 X 轴
-                color_mu = '#ff7f0e'  # 橙色
-                ax2.set_ylabel(r'磁导率 $\mu$ ($10^{-3}$ H/m)', color=color_mu, fontsize=12)
-                line2, = ax2.plot(x_smooth, y2_smooth, color=color_mu, linewidth=2, linestyle='--', label='μ-H 曲线')
-                ax2.scatter(x, y2, color=color_mu, marker='s', s=50, zorder=5)  # 原始数据点
-                ax2.tick_params(axis='y', labelcolor=color_mu)
+                # === 图2: 基本磁化曲线与导磁率 (u-H & B-H) ===
+                # 复刻实验报告图片1的效果：双Y轴显示
+                ax2.set_title("基本磁化曲线及导磁率", fontsize=14)
+                ax2.set_xlabel("磁场强度 H (A/m)", fontsize=12)
+                
+                # 左Y轴：绘制磁导率 mu (红色)
+                ax2.set_ylabel(r"磁导率 $\mu$ ($10^{-3}$ H/m)", color='red', fontsize=12)
+                
+                # 数据筛选：只取第一象限 (H>0, B>0) 的数据来绘制基本特性
+                mask = (H > 0) & (B > 0)
+                h_pos = H[mask]
+                mu_pos = mu[mask]
+                b_pos = B[mask]
+                
+                # 排序：按 H 从小到大排序，防止连线错乱
+                sorted_indices = np.argsort(h_pos)
+                h_sorted = h_pos[sorted_indices]
+                mu_sorted = mu_pos[sorted_indices]
+                b_sorted = b_pos[sorted_indices]
+                
+                # 绘制 mu-H 曲线
+                ax2.plot(h_sorted, mu_sorted, 's-', color='red', label=r'$\mu$-H')
+                ax2.tick_params(axis='y', labelcolor='red')
+                
+                # 右Y轴：绘制基本磁化 B-H (蓝色)
+                ax3 = ax2.twinx() # 创建共享X轴的第二个坐标轴
+                ax3.set_ylabel("磁感应强度 B (mT)", color='blue', fontsize=12)
+                ax3.plot(h_sorted, b_sorted, 'o-', color='blue', label='B-H (Basic)')
+                ax3.tick_params(axis='y', labelcolor='blue')
+                
+                ax2.grid(True, linestyle='--', alpha=0.5)
 
-                # --- 合并图例 ---
-                lines = [line1, line2]
-                labels = [l.get_label() for l in lines]
-                ax1.legend(lines, labels, loc='upper left', shadow=True)
-
-                plt.tight_layout()
-                st.pyplot(fig)  # 在 Streamlit 中显示图表
-
+                plt.tight_layout() # 自动调整间距防止重叠
+                st.pyplot(fig)     # 在网页显示图片
             else:
-                st.error(f"❌ 数据点不足！当前只有 {data_count} 个点，至少需要 3 个点才能绘制曲线。")
+                st.error("数据点不足，无法绘图")
 
-        except ImportError:
-            st.error("❌ 缺少必要的库。请在终端运行: pip install scipy numpy")
         except Exception as e:
-            st.error(f"❌ 绘图过程发生未知错误: {e}")
+            st.error(f"绘图出错: {e}")
             import traceback
-
             st.text(traceback.format_exc())
+
 
 
 
