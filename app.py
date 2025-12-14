@@ -131,92 +131,153 @@ if st.button("开始计算", type="primary"):
     except Exception as e:
         st.error("运行出错")
         st.exception(e)
-
-    # --- C. 绘图逻辑 (仅针对磁滞回线实验) ---
-    # 注意：绘图代码必须放在 try-except 块之外，确保计算成功后才执行
+    
+    # D. 画图逻辑 (优化版：平滑曲线 + 字体修复 + 数据排序)
+    # ----------------------------------------------------
     TARGET_EXP_NAME = "磁滞回线 (H-B计算)"
-
-  
 
     if calc_success and choice == TARGET_EXP_NAME:
         st.markdown("---")
-        st.write("🔄 正在生成分析图表...")
+        st.write("🔄 正在生成平滑曲线图表...")
 
         try:
             from scipy.interpolate import make_interp_spline
             
-            # 设置绘图字体 (优先使用 SimHei 显示中文，没有则回退到其他字体)
-            plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial', 'sans-serif']
-            plt.rcParams['axes.unicode_minus'] = False
+            # === 1. 全局字体设置 (解决中文乱码) ===
+            # 优先尝试 Windows/Linux/Mac 常见中文字体
+            possible_fonts = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'WenQuanYi Micro Hei', 'sans-serif']
+            plt.rcParams['font.sans-serif'] = possible_fonts
+            plt.rcParams['axes.unicode_minus'] = False # 解决负号显示为方块的问题
 
-            # 获取计算结果
+            # === 2. 获取原始数据 ===
             H = np.array(exp.get_data_from_pool("Results_H", lambda: []))
-            # 将 B 转换为 mT，将 mu 转换为 10^-3 单位，以匹配实验报告的坐标轴数值
+            # 转换为显示单位: B(mT), mu(10^-3)
             B = np.array(exp.get_data_from_pool("Results_B", lambda: [])) * 1000 
             mu = np.array(exp.get_data_from_pool("Results_mu", lambda: [])) * 1000 
 
-            if len(H) > 3:
-                st.markdown("### 📊 实验结果可视化")
+            # 定义一个通用的平滑函数
+            def get_smooth_data(x_raw, y_raw, k=3, num_points=300):
+                """
+                x_raw, y_raw: 原始数据
+                k: 插值阶数 (3为三次样条，曲线最滑)
+                num_points: 插值后的点数
+                """
+                # 1. 必须按 x 排序，否则插值会报错或乱画
+                sorted_indices = np.argsort(x_raw)
+                x_sorted = x_raw[sorted_indices]
+                y_sorted = y_raw[sorted_indices]
                 
-                # 创建 1 行 2 列的子图布局，figsize设置图片宽长比
+                # 2. 去除 x 重复的点 (插值不允许 x 有重复)
+                x_unique, unique_indices = np.unique(x_sorted, return_index=True)
+                y_unique = y_sorted[unique_indices]
+                
+                # 3. 数据点过少时降级处理
+                if len(x_unique) <= k:
+                    return x_sorted, y_sorted # 点太少，直接返回折线
+                
+                # 4. 生成插值
+                try:
+                    spl = make_interp_spline(x_unique, y_unique, k=k)
+                    x_smooth = np.linspace(x_unique.min(), x_unique.max(), num_points)
+                    y_smooth = spl(x_smooth)
+                    return x_smooth, y_smooth
+                except:
+                    return x_sorted, y_sorted
+
+            if len(H) > 4:
+                st.markdown("### 📊 实验结果可视化 (平滑处理)")
+                
                 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-                # === 图1: 磁滞回线 (B-H Loop) ===
-                # 复刻实验报告图片3的效果
+                # ==========================================================
+                # 图1: 磁滞回线 (B-H Loop) - 平滑处理技巧
+                # 技巧：磁滞回线不能直接排序(否则会变成一条线)，需要拆分成"上行"和"下行"两段分别平滑
+                # ==========================================================
                 ax1.set_title("磁滞回线 (B-H Loop)", fontsize=14)
                 ax1.set_xlabel("磁场强度 H (A/m)", fontsize=12)
                 ax1.set_ylabel("磁感应强度 B (mT)", fontsize=12)
                 
-                # 绘制闭合回路，zorder控制绘制层级
-                ax1.plot(H, B, 'o-', color='black', linewidth=1.5, label='Loop', zorder=2)
+                # 找到 X 轴最大值和最小值的索引，将回线切分为两半
+                # 通常数据是 5 -> -5 -> 5。最大值在两头，最小值在中间。
+                idx_max = np.argmax(H) # 理论上是起点附近
+                idx_min = np.argmin(H) # 理论上是中间
                 
-                # 绘制十字坐标轴辅助线
-                ax1.axhline(0, color='gray', linewidth=0.8, zorder=1) 
-                ax1.axvline(0, color='gray', linewidth=0.8, zorder=1)
+                # 由于数据可能是环状数组，我们简单地将其对半切分
+                mid_point = len(H) // 2
+                
+                # 上半支 (从正到负)
+                h_top_raw = H[:mid_point+1]
+                b_top_raw = B[:mid_point+1]
+                # 下半支 (从负到正)
+                h_bot_raw = H[mid_point:]
+                b_bot_raw = B[mid_point:]
+                
+                # 分别获取平滑曲线
+                h_top_smooth, b_top_smooth = get_smooth_data(h_top_raw, b_top_raw)
+                h_bot_smooth, b_bot_smooth = get_smooth_data(h_bot_raw, b_bot_raw)
+                
+                # 绘制平滑线
+                ax1.plot(h_top_smooth, b_top_smooth, '-', color='black', linewidth=1.5, label='Fit Curve')
+                ax1.plot(h_bot_smooth, b_bot_smooth, '-', color='black', linewidth=1.5)
+                
+                # 绘制原始散点
+                ax1.scatter(H, B, color='red', s=30, zorder=5, label='Raw Data')
+                
+                ax1.axhline(0, color='gray', linewidth=0.8, alpha=0.5)
+                ax1.axvline(0, color='gray', linewidth=0.8, alpha=0.5)
                 ax1.grid(True, linestyle='--', alpha=0.5)
+                ax1.legend(loc='upper left')
 
-                # === 图2: 基本磁化曲线与导磁率 (u-H & B-H) ===
-                # 复刻实验报告图片1的效果：双Y轴显示
+                # ==========================================================
+                # 图2: 基本磁化曲线与导磁率 - 必须排序
+                # ==========================================================
                 ax2.set_title("基本磁化曲线及导磁率", fontsize=14)
                 ax2.set_xlabel("磁场强度 H (A/m)", fontsize=12)
                 
-                # 左Y轴：绘制磁导率 mu (红色)
-                ax2.set_ylabel(r"磁导率 $\mu$ ($10^{-3}$ H/m)", color='red', fontsize=12)
-                
-                # 数据筛选：只取第一象限 (H>0, B>0) 的数据来绘制基本特性
-                mask = (H > 0) & (B > 0)
+                # 筛选第一象限数据 (H>0, B>0)
+                mask = (H > 1e-3) & (B > 1e-3) # 过滤掉0值防止干扰
                 h_pos = H[mask]
                 mu_pos = mu[mask]
                 b_pos = B[mask]
-                
-                # 排序：按 H 从小到大排序，防止连线错乱
-                sorted_indices = np.argsort(h_pos)
-                h_sorted = h_pos[sorted_indices]
-                mu_sorted = mu_pos[sorted_indices]
-                b_sorted = b_pos[sorted_indices]
-                
-                # 绘制 mu-H 曲线
-                ax2.plot(h_sorted, mu_sorted, 's-', color='red', label=r'$\mu$-H')
-                ax2.tick_params(axis='y', labelcolor='red')
-                
-                # 右Y轴：绘制基本磁化 B-H (蓝色)
-                ax3 = ax2.twinx() # 创建共享X轴的第二个坐标轴
-                ax3.set_ylabel("磁感应强度 B (mT)", color='blue', fontsize=12)
-                ax3.plot(h_sorted, b_sorted, 'o-', color='blue', label='B-H (Basic)')
-                ax3.tick_params(axis='y', labelcolor='blue')
+
+                if len(h_pos) > 3:
+                    # --- 左Y轴: mu (红色) ---
+                    ax2.set_ylabel(r"磁导率 $\mu$ ($10^{-3}$ H/m)", color='red', fontsize=12)
+                    
+                    # 获取平滑数据 (函数内部会自动排序)
+                    h_mu_smooth, mu_smooth = get_smooth_data(h_pos, mu_pos)
+                    
+                    ax2.plot(h_mu_smooth, mu_smooth, '-', color='red', linewidth=2, label=r'$\mu$-H')
+                    ax2.scatter(h_pos, mu_pos, color='red', marker='s', s=30) # 原始点
+                    ax2.tick_params(axis='y', labelcolor='red')
+                    
+                    # --- 右Y轴: B (蓝色) ---
+                    ax3 = ax2.twinx()
+                    ax3.set_ylabel("磁感应强度 B (mT)", color='blue', fontsize=12)
+                    
+                    # 获取平滑数据
+                    h_b_smooth, b_b_smooth = get_smooth_data(h_pos, b_pos)
+                    
+                    ax3.plot(h_b_smooth, b_b_smooth, '-', color='blue', linewidth=2, label='B-H (Basic)')
+                    ax3.scatter(h_pos, b_pos, color='blue', marker='o', s=30) # 原始点
+                    ax3.tick_params(axis='y', labelcolor='blue')
+                    
+                    # 合并图例
+                    lines = [plt.Line2D([0], [0], color='red', lw=2), plt.Line2D([0], [0], color='blue', lw=2)]
+                    ax2.legend(lines, [r'$\mu$-H', 'B-H (Basic)'], loc='center right')
                 
                 ax2.grid(True, linestyle='--', alpha=0.5)
 
-                plt.tight_layout() # 自动调整间距防止重叠
-                st.pyplot(fig)     # 在网页显示图片
+                plt.tight_layout()
+                st.pyplot(fig)
             else:
-                st.error("数据点不足，无法绘图")
+                st.error("数据点不足 (至少需要 5 个点才能进行平滑绘制)")
 
+        except ImportError:
+            st.error("缺少必要的库，请安装: pip install scipy")
         except Exception as e:
             st.error(f"绘图出错: {e}")
             import traceback
             st.text(traceback.format_exc())
-
-
-
+    
 
