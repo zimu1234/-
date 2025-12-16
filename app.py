@@ -30,8 +30,8 @@ st.title("🧪 物理实验数据处理平台")
 # 映射关系： "菜单显示名称" : (对应的实验类, 点击按钮后执行的入口函数名)
 # ==============================================================================
 experiments_map = {
-    "单摆测重力加速度": (PendulumExp, "step2_average"),
-    "伏安法测电阻": (OhmExp, "calc_R"),
+    "单摆测重力加速度": (PendulumExp, "calculate_g"),
+    "伏安法测电阻": (OhmExp, "calculate_R"),
     "磁滞回线 (H-B计算)": (HysteresisExp, "calculate_BH"),
     "静电场描绘 (r值均值误差)": (ElectricFieldExp, "calculate_results"),
     "光学干涉 (牛顿环 & 劈形膜)": (InterferenceExp, "calculate_wedge_thickness")
@@ -236,5 +236,6 @@ if st.button("开始计算", type="primary"):
             import traceback
             st.text(traceback.format_exc())
     
+
 
 
