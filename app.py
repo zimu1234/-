@@ -23,7 +23,7 @@ from experiments import (
 # 设置网页标题、布局模式（wide模式可以容纳更宽的图表）
 # ==============================================================================
 st.set_page_config(page_title="物理实验助手", layout="wide")
-st.title("🧪 物理实验数据处理平台")
+st.title("🧪 天津大学物理实验数据处理平台")
 
 # ==============================================================================
 # 3. 实验菜单配置
@@ -236,6 +236,7 @@ if st.button("开始计算", type="primary"):
             import traceback
             st.text(traceback.format_exc())
     
+
 
 
 
